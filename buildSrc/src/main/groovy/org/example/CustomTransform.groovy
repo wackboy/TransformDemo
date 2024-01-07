@@ -11,6 +11,12 @@ import com.android.build.api.transform.TransformInvocation
 import com.android.build.api.transform.TransformOutputProvider
 import com.android.build.gradle.internal.pipeline.TransformManager
 import com.android.ide.common.internal.WaitableExecutor
+import groovyjarjarasm.asm.ClassReader
+import groovyjarjarasm.asm.ClassVisitor
+import groovyjarjarasm.asm.ClassWriter
+import groovyjarjarasm.asm.MethodVisitor
+import groovyjarjarasm.asm.Opcodes
+import groovyjarjarasm.asm.commons.AdviceAdapter
 import org.apache.commons.io.FileUtils
 
 import java.util.concurrent.Callable
@@ -203,6 +209,79 @@ class CustomTransform extends Transform {
     static void transformDirectory(File directoryInputFile, File dest) {
         println("copy文件夹 $dest -----")
         FileUtils.copyDirectory(directoryInputFile, dest)
+    }
+
+    /**
+     * ClassReader读取字节码文件的时候，数据会通过ClassVisitor回调回来
+     * 咱们可以自定义一个ClassWriter用来接受读取到的字节数据
+     * 同时可以插入一点东西在这些数据的前面或者后面
+     * 最后通过ClassWriter的toByteArray将数据导出，这就是所谓的“插桩”！！！！！！
+     * @param inputFiles
+     * @param outputFiles
+     */
+    static void copyFile(File inputFiles, File outputFiles) {
+        FileInputStream inputStream = new FileInputStream(inputFiles)
+        FileOutputStream outputStream = new FileOutputStream(outputFiles)
+        // 1. 构建ClassReader对象
+        ClassReader classReader = new ClassReader(inputStream)
+        // 2. 构建ClassVisitor的实现类ClassWriter
+        ClassWriter classWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS)
+        // 3. 将ClassReader读取的内容回调给ClassVisitor接口
+//        classReader.accept(classWriter, ClassReader.EXPAND_FRAMES)
+
+        classReader.accept(new HelloClassVisitor((ClassVisitor)classWriter), ClassReader.EXPAND_FRAMES)
+
+
+
+        // 4. 通过classWriter对象的toByteArray方法拿到完整的字节流
+        outputStream.write(classWriter.toByteArray())
+        inputStream.close()
+        outputStream.close()
+    }
+
+    // 修改如下的代码文件
+//    static void test() {
+//        println("test")
+//    }
+//
+//    static void test() {
+//        println("Hello World")
+//        println("test")
+//    }
+
+    class HelloClassVisitor extends ClassVisitor {
+
+        HelloClassVisitor(ClassVisitor cv) {
+            super(Opcodes.ASM7, cv)
+        }
+
+        @Override
+        MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+            def methodVisitor = cv.visitMethod(access, name, descriptor, signature, exceptions)
+            return new HelloMethodVisitor(api, methodVisitor, access, name, descriptor)
+        }
+    }
+
+    /**
+     * 对方法进行插桩
+     */
+    class HelloMethodVisitor extends AdviceAdapter {
+
+        protected HelloMethodVisitor(int api, MethodVisitor methodVisitor, int access, String name, String descriptor) {
+            super(api, methodVisitor, access, name, descriptor)
+        }
+
+        /**
+         * 方法进入
+         */
+        @Override
+        protected void onMethodEnter() {
+            super.onMethodEnter()
+            // 这里的mv是MethodVisitor
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream")
+            mv.visitLdcInsn("Hello World!")
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false)
+        }
     }
 
 }
